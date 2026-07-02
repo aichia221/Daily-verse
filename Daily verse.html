@@ -1,0 +1,726 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+<title>每日經文 Daily Verse</title>
+<link rel="icon" href="data:,">
+<style>
+  html, body { margin: 0; padding: 0; background: #F7F5F0; }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  button { font-family: inherit; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+
+<script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+<script type="text/babel" data-presets="react">
+const { useState, useEffect, useMemo } = React;
+
+// ---- localStorage 版的 window.storage shim(取代 Claude 環境專屬 API) ----
+window.storage = {
+  get: async (key) => {
+    const v = localStorage.getItem(key);
+    if (v === null) throw new Error("not found");
+    return { key, value: v, shared: false };
+  },
+  set: async (key, value) => {
+    localStorage.setItem(key, value);
+    return { key, value, shared: false };
+  },
+  delete: async (key) => {
+    localStorage.removeItem(key);
+    return { key, deleted: true, shared: false };
+  },
+};
+
+// ---- 簡易圖示元件(取代 lucide-react) ----
+function Heart({ size = 16, color = "currentColor", fill = "none", strokeWidth = 1.6 }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill={fill} stroke={color} strokeWidth={strokeWidth} strokeLinecap="round" strokeLinejoin="round">
+      <path d="M20.8 4.6a5.5 5.5 0 0 0-7.8 0L12 5.6l-1-1a5.5 5.5 0 0 0-7.8 7.8l1 1L12 21l7.8-7.8 1-1a5.5 5.5 0 0 0 0-7.6Z" />
+    </svg>
+  );
+}
+function ChevronLeft({ size = 20, color = "currentColor" }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <polyline points="15 18 9 12 15 6" />
+    </svg>
+  );
+}
+function ChevronRight({ size = 20, color = "currentColor" }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <polyline points="9 18 15 12 9 6" />
+    </svg>
+  );
+}
+function Shuffle({ size = 16, color = "currentColor" }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <polyline points="16 3 21 3 21 8" /><line x1="4" y1="20" x2="21" y2="3" />
+      <polyline points="21 16 21 21 16 21" /><line x1="15" y1="15" x2="21" y2="21" /><line x1="4" y1="4" x2="9" y2="9" />
+    </svg>
+  );
+}
+function X({ size = 16, color = "currentColor" }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
+    </svg>
+  );
+}
+
+
+// ---- 經文資料(和合本,公版) ----
+const VERSES = [
+  { ref: "耶利米書 29:11", text: "耶和華說，我知道我向你們所懷的意念，是賜平安的意念，不是降災禍的意念，要叫你們末後有指望。", refEn: "Jeremiah 29:11", textEn: "For I know the thoughts that I think toward you, says Yahweh, thoughts of peace, and not of evil, to give you hope and a future." },
+  { ref: "腓立比書 4:6-7", text: "應當一無罣慮，只要凡事藉著禱告、祈求，和感謝，將你們所要的告訴神。神所賜出人意外的平安必在耶穌基督裡保守你們的心懷意念。", refEn: "Philippians 4:6-7", textEn: "In nothing be anxious, but in everything, by prayer and petition with thanksgiving, let your requests be made known to God. And the peace of God, which surpasses all understanding, will guard your hearts and your thoughts in Christ Jesus." },
+  { ref: "以賽亞書 40:31", text: "但那等候耶和華的必重新得力，他們必如鷹展翅上騰，他們奔跑卻不困倦，行走卻不疲乏。", refEn: "Isaiah 40:31", textEn: "but those who wait for Yahweh will renew their strength. They will mount up with wings like eagles. They will run, and not be weary. They will walk, and not faint." },
+  { ref: "羅馬書 8:28", text: "我們曉得萬事都互相效力，叫愛神的人得益處，就是按他旨意被召的人。", refEn: "Romans 8:28", textEn: "We know that all things work together for good for those who love God, for those who are called according to his purpose." },
+  { ref: "箴言 3:5-6", text: "你要專心仰賴耶和華，不可倚靠自己的聰明，在你一切所行的事上都要認定他，他必指引你的路。", refEn: "Proverbs 3:5-6", textEn: "Trust in Yahweh with all your heart, and don’t lean on your own understanding. In all your ways acknowledge him, and he will make your paths straight." },
+  { ref: "馬太福音 6:34", text: "所以不要為明天憂慮，因為明天自有明天的憂慮，一天的難處一天當就夠了。", refEn: "Matthew 6:34", textEn: "Therefore don’t be anxious for tomorrow, for tomorrow will be anxious for itself. Each day’s own evil is sufficient." },
+  { ref: "哥林多後書 5:17", text: "若有人在基督裡，他就是新造的人，舊事已過，都變成新的了。", refEn: "2 Corinthians 5:17", textEn: "Therefore if anyone is in Christ, he is a new creation. The old things have passed away. Behold, all things have become new." },
+  { ref: "詩篇 27:1", text: "耶和華是我的亮光，是我的拯救，我還怕誰呢？", refEn: "Psalm 27:1", textEn: "Yahweh is my light and my salvation. Whom shall I fear? Yahweh is the strength of my life. Of whom shall I be afraid?" },
+  { ref: "希伯來書 11:1", text: "信就是所望之事的實底，是未見之事的確據。", refEn: "Hebrews 11:1", textEn: "Now faith is assurance of things hoped for, proof of things not seen." },
+  { ref: "加拉太書 6:9", text: "我們行善，不可喪志，若不灰心，到了時候就要收成。", refEn: "Galatians 6:9", textEn: "Let’s not be weary in doing good, for we will reap in due season if we don’t give up." },
+  { ref: "約翰福音 14:27", text: "我留下平安給你們，我將我的平安賜給你們，我所賜的，不像世人所賜的。你們心裡不要憂愁，也不要膽怯。", refEn: "John 14:27", textEn: "Peace I leave with you. My peace I give to you; not as the world gives, I give to you. Don’t let your heart be troubled, neither let it be fearful." },
+  { ref: "以弗所書 2:10", text: "我們原是他的工作，在基督耶穌裡造成的，為要叫我們行善，就是神所預備叫我們行的。", refEn: "Ephesians 2:10", textEn: "For we are his workmanship, created in Christ Jesus for good works, which God prepared before that we would walk in them." },
+  { ref: "詩篇 90:12", text: "求你指教我們怎樣數算自己的日子，好叫我們得著智慧的心。", refEn: "Psalm 90:12", textEn: "So teach us to count our days, that we may gain a heart of wisdom." },
+  { ref: "彌迦書 6:8", text: "世人哪，耶和華已指示你何為善，他向你所要的是甚麼呢？只要你行公義，好憐憫，存謙卑的心，與你的神同行。", refEn: "Micah 6:8", textEn: "He has shown you, O man, what is good. What does Yahweh require of you, but to act justly, to love mercy, and to walk humbly with your God?" },
+  { ref: "哥林多前書 13:4", text: "愛是恆久忍耐，又有恩慈，愛是不嫉妒，愛是不自誇，不張狂。", refEn: "1 Corinthians 13:4", textEn: "Love is patient and is kind. Love doesn’t envy. Love doesn’t brag, is not proud," },
+  { ref: "申命記 31:6", text: "你們當剛強壯膽，不要害怕，也不要畏懼他們，因為耶和華你的神和你同去，他必不撇下你，也不丟棄你。", refEn: "Deuteronomy 31:6", textEn: "Be strong and courageous. Don’t be afraid or scared of them, for Yahweh your God himself is who goes with you. He will not fail you nor forsake you." },
+  { ref: "詩篇 16:11", text: "你必將生命的道路指示我，在你面前有滿足的喜樂，在你右手中有永遠的福樂。", refEn: "Psalm 16:11", textEn: "You will show me the path of life. In your presence is fullness of joy. In your right hand there are pleasures forever more." },
+  { ref: "以賽亞書 41:10", text: "你不要害怕，因為我與你同在，不要驚惶，因為我是你的神，我必堅固你，我必幫助你，我必用我公義的右手扶持你。", refEn: "Isaiah 41:10", textEn: "Don’t you be afraid, for I am with you. Don’t be dismayed, for I am your God. I will strengthen you. Yes, I will help you. Yes, I will uphold you with the right hand of my righteousness." },
+  { ref: "詩篇 37:4", text: "又要以耶和華為樂，他就將你心裡所求的賜給你。", refEn: "Psalm 37:4", textEn: "Also delight yourself in Yahweh, and he will give you the desires of your heart." },
+  { ref: "馬太福音 11:28", text: "凡勞苦擔重擔的人可以到我這裡來，我就使你們得安息。", refEn: "Matthew 11:28", textEn: "Come to me, all you who labor and are heavily burdened, and I will give you rest." },
+  { ref: "約書亞記 1:9", text: "我豈沒有吩咐你嗎？你當剛強壯膽，不要懼怕，也不要驚惶，因為你無論往哪裡去，耶和華你的神必與你同在。", refEn: "Joshua 1:9", textEn: "Haven’t I commanded you? Be strong and courageous. Don’t be afraid. Don’t be dismayed, for Yahweh your God is with you wherever you go." },
+  { ref: "詩篇 119:105", text: "你的話是我腳前的燈，是我路上的光。", refEn: "Psalm 119:105", textEn: "Your word is a lamp to my feet, and a light for my path." },
+  { ref: "雅各書 1:2-3", text: "我的弟兄們，你們落在百般試煉中，都要以為大喜樂，因為知道你們的信心經過試驗，就生忍耐。", refEn: "James 1:2-3", textEn: "Count it all joy, my brothers, when you fall into various temptations, knowing that the testing of your faith produces endurance." },
+  { ref: "詩篇 62:1", text: "我的心默默無聲，專等候神，我的救恩是從他而來。", refEn: "Psalm 62:1", textEn: "My soul rests in God alone. My salvation is from him." },
+  { ref: "路加福音 12:7", text: "就是你們的頭髮，也都被數過了，不要懼怕，你們比許多麻雀還貴重。", refEn: "Luke 12:7", textEn: "But the very hairs of your head are all counted. Therefore don’t be afraid. You are of more value than many sparrows." },
+  { ref: "詩篇 84:11", text: "因為耶和華神是日頭，是盾牌，要賜下恩惠和榮耀。他未嘗留下一樣好處不給那些行動正直的人。", refEn: "Psalm 84:11", textEn: "For Yahweh God is a sun and a shield. Yahweh will give grace and glory. He withholds no good thing from those who walk blamelessly." },
+  { ref: "西番雅書 3:17", text: "耶和華你的神是施行拯救、大有能力的主，他在你中間必因你歡欣喜樂，默然愛你，且因你喜樂而歡呼。", refEn: "Zephaniah 3:17", textEn: "Yahweh, your God, is among you, a mighty one who will save. He will rejoice over you with joy. He will calm you in his love. He will rejoice over you with singing." },
+  { ref: "詩篇 73:26", text: "我的肉體和我的心腸衰殘，但神是我心裡的力量，又是我的福分，直到永遠。", refEn: "Psalm 73:26", textEn: "My flesh and my heart fails, but God is the strength of my heart and my portion forever." },
+  { ref: "羅馬書 12:2", text: "不要效法這個世界，只要心意更新而變化，叫你們察驗何為神的善良、純全、可喜悅的旨意。", refEn: "Romans 12:2", textEn: "Don’t be conformed to this world, but be transformed by the renewing of your mind, so that you may prove what is the good, well-pleasing, and perfect will of God." },
+  { ref: "詩篇 143:8", text: "求你使我清晨得聽你慈愛之言，因我倚靠你，求你使我知道當行的路，因我的心仰望你。", refEn: "Psalm 143:8", textEn: "Cause me to hear your loving kindness in the morning, for I trust in you. Cause me to know the way in which I should walk, for I lift up my soul to you." },
+  { ref: "傳道書 3:1", text: "凡事都有定期，天下萬務都有定時。", refEn: "Ecclesiastes 3:1", textEn: "For everything there is a season, and a time for every purpose under heaven:" },
+  { ref: "詩篇 30:5", text: "一宿雖然有哭泣，早晨便必歡呼。", refEn: "Psalm 30:5", textEn: "For his anger is but for a moment. His favor is for a lifetime. Weeping may stay for the night, but joy comes in the morning." },
+  { ref: "腓立比書 4:13", text: "我靠著那加給我力量的，凡事都能做。", refEn: "Philippians 4:13", textEn: "I can do all things through Christ who strengthens me." },
+  { ref: "以賽亞書 43:1-2", text: "你不要害怕，因為我救贖了你，我曾提你的名召你，你是屬我的。你從水中經過，我必與你同在。", refEn: "Isaiah 43:1-2", textEn: "But now Yahweh who created you, Jacob, and he who formed you, Israel, says: Don’t be afraid, for I have redeemed you. I have called you by your name. You are mine. When you pass through the waters, I will be with you, and through the rivers, they will not overflow you. When you walk through the fire, you will not be burned, and flame will not scorch you." },
+  { ref: "詩篇 1:1", text: "不從惡人的計謀，不站罪人的道路，不坐褻慢人的座位，", refEn: "Psalm 1:1", textEn: "Blessed is the man who doesn’t walk in the counsel of the wicked, nor stand on the path of sinners, nor sit in the seat of scoffers;" },
+  { ref: "詩篇 1:2", text: "惟喜愛耶和華的律法，晝夜思想，這人便為有福！", refEn: "Psalm 1:2", textEn: "but his delight is in Yahweh’s law. On his law he meditates day and night." },
+  { ref: "詩篇 1:3", text: "他要像一棵樹栽在溪水旁，按時候結果子，葉子也不枯乾。凡他所做的盡都順利。", refEn: "Psalm 1:3", textEn: "He will be like a tree planted by the streams of water, that produces its fruit in its season, whose leaf also does not wither. Whatever he does shall prosper." },
+  { ref: "詩篇 1:4", text: "惡人並不是這樣，乃像糠詷被風吹散。", refEn: "Psalm 1:4", textEn: "The wicked are not so, but are like the chaff which the wind drives away." },
+  { ref: "詩篇 1:5", text: "因此，當審判的時候，惡人必站立不住；罪人在義人的會中也是如此。", refEn: "Psalm 1:5", textEn: "Therefore the wicked shall not stand in the judgment, nor sinners in the congregation of the righteous." },
+  { ref: "詩篇 1:6", text: "因為耶和華知道義人的道路；惡人的道路卻必滅亡。", refEn: "Psalm 1:6", textEn: "For Yahweh knows the way of the righteous, but the way of the wicked shall perish." },
+  { ref: "詩篇 23:1", text: "耶和華是我的牧者，我必不致缺乏。", refEn: "Psalm 23:1", textEn: "Yahweh is my shepherd; I shall lack nothing." },
+  { ref: "詩篇 23:2", text: "他使我躺臥在青草地上，領我在可安歇的水邊。", refEn: "Psalm 23:2", textEn: "He makes me lie down in green pastures. He leads me beside still waters." },
+  { ref: "詩篇 23:3", text: "他使我的靈魂甦醒，為自己的名引導我走義路。", refEn: "Psalm 23:3", textEn: "He restores my soul. He guides me in the paths of righteousness for his name’s sake." },
+  { ref: "詩篇 23:4", text: "我雖然行過死蔭的幽谷，也不怕遭害，因為你與我同在；你的杖，你的竿，都安慰我。", refEn: "Psalm 23:4", textEn: "Even though I walk through the valley of the shadow of death, I will fear no evil, for you are with me. Your rod and your staff, they comfort me." },
+  { ref: "詩篇 23:5", text: "在我敵人面前，你為我擺設筵席；你用油膏了我的頭，使我的福杯滿溢。", refEn: "Psalm 23:5", textEn: "You prepare a table before me in the presence of my enemies. You anoint my head with oil. My cup runs over." },
+  { ref: "詩篇 23:6", text: "我一生一世必有恩惠慈愛隨着我；我且要住在耶和華的殿中，直到永遠。", refEn: "Psalm 23:6", textEn: "Surely goodness and loving kindness shall follow me all the days of my life, and I will dwell in Yahweh’s house forever." },
+  { ref: "詩篇 46:1", text: "上帝是我們的避難所，是我們的力量，是我們在患難中隨時的幫助。", refEn: "Psalm 46:1", textEn: "God is our refuge and strength, a very present help in trouble." },
+  { ref: "詩篇 46:2", text: "所以，地雖改變，山雖搖動到海心，", refEn: "Psalm 46:2", textEn: "Therefore we won’t be afraid, though the earth changes, though the mountains are shaken into the heart of the seas;" },
+  { ref: "詩篇 46:3", text: "其中的水雖匉訇翻騰，山雖因海漲而戰抖，我們也不害怕。", refEn: "Psalm 46:3", textEn: "though its waters roar and are troubled, though the mountains tremble with their swelling. Selah." },
+  { ref: "詩篇 46:4", text: "有一道河，這河的分汊使上帝的城歡喜；這城就是至高者居住的聖所。", refEn: "Psalm 46:4", textEn: "There is a river, the streams of which make the city of God glad, the holy place of the tents of the Most High." },
+  { ref: "詩篇 46:5", text: "上帝在其中，城必不動搖；到天一亮，上帝必幫助這城。", refEn: "Psalm 46:5", textEn: "God is within her. She shall not be moved. God will help her at dawn." },
+  { ref: "詩篇 46:6", text: "外邦喧嚷，列國動搖；上帝發聲，地便鎔化。", refEn: "Psalm 46:6", textEn: "The nations raged. The kingdoms were moved. He lifted his voice and the earth melted." },
+  { ref: "詩篇 46:7", text: "萬軍之耶和華與我們同在；雅各的上帝是我們的避難所！", refEn: "Psalm 46:7", textEn: "Yahweh of Armies is with us. The God of Jacob is our refuge. Selah." },
+  { ref: "詩篇 46:8", text: "你們來看耶和華的作為，看他使地怎樣荒涼。", refEn: "Psalm 46:8", textEn: "Come, see Yahweh’s works, what desolations he has made in the earth." },
+  { ref: "詩篇 46:9", text: "他止息刀兵，直到地極；他折弓、斷槍，把戰車焚燒在火中。", refEn: "Psalm 46:9", textEn: "He makes wars cease to the end of the earth. He breaks the bow, and shatters the spear. He burns the chariots in the fire." },
+  { ref: "詩篇 46:10", text: "你們要休息，要知道我是上帝！我必在外邦中被尊崇，在遍地上也被尊崇。", refEn: "Psalm 46:10", textEn: "“Be still, and know that I am God. I will be exalted among the nations. I will be exalted in the earth.”" },
+  { ref: "詩篇 46:11", text: "萬軍之耶和華與我們同在；雅各的上帝是我們的避難所！", refEn: "Psalm 46:11", textEn: "Yahweh of Armies is with us. The God of Jacob is our refuge." },
+  { ref: "詩篇 91:1", text: "住在至高者隱密處的，必住在全能者的蔭下。", refEn: "Psalm 91:1", textEn: "He who dwells in the secret place of the Most High will rest in the shadow of the Almighty." },
+  { ref: "詩篇 91:2", text: "我要論到耶和華說：他是我的避難所，是我的山寨，是我的上帝，是我所倚靠的。", refEn: "Psalm 91:2", textEn: "I will say of Yahweh, “He is my refuge and my fortress; my God, in whom I trust.”" },
+  { ref: "詩篇 91:3", text: "他必救你脫離捕鳥人的網羅和毒害的瘟疫。", refEn: "Psalm 91:3", textEn: "For he will deliver you from the snare of the fowler, and from the deadly pestilence." },
+  { ref: "詩篇 91:4", text: "他必用自己的翎毛遮蔽你；你要投靠在他的翅膀底下；他的誠實是大小的盾牌。", refEn: "Psalm 91:4", textEn: "He will cover you with his feathers. Under his wings you will take refuge. His faithfulness is your shield and rampart." },
+  { ref: "詩篇 91:5", text: "你必不怕黑夜的驚駭，或是白日飛的箭，", refEn: "Psalm 91:5", textEn: "You shall not be afraid of the terror by night, nor of the arrow that flies by day," },
+  { ref: "詩篇 91:6", text: "也不怕黑夜行的瘟疫，或是午間滅人的毒病。", refEn: "Psalm 91:6", textEn: "nor of the pestilence that walks in darkness, nor of the destruction that wastes at noonday." },
+  { ref: "詩篇 91:7", text: "雖有千人仆倒在你旁邊，萬人仆倒在你右邊，這災卻不得臨近你。", refEn: "Psalm 91:7", textEn: "A thousand may fall at your side, and ten thousand at your right hand; but it will not come near you." },
+  { ref: "詩篇 91:8", text: "你惟親眼觀看，見惡人遭報。", refEn: "Psalm 91:8", textEn: "You will only look with your eyes, and see the recompense of the wicked." },
+  { ref: "詩篇 91:9", text: "耶和華是我的避難所；你已將至高者當你的居所，", refEn: "Psalm 91:9", textEn: "Because you have made Yahweh your refuge, and the Most High your dwelling place," },
+  { ref: "詩篇 91:10", text: "禍患必不臨到你，災害也不挨近你的帳棚。", refEn: "Psalm 91:10", textEn: "no evil shall happen to you, neither shall any plague come near your dwelling." },
+  { ref: "詩篇 91:11", text: "因他要為你吩咐他的使者，在你行的一切道路上保護你。", refEn: "Psalm 91:11", textEn: "For he will put his angels in charge of you, to guard you in all your ways." },
+  { ref: "詩篇 91:12", text: "他們要用手托着你，免得你的腳碰在石頭上。", refEn: "Psalm 91:12", textEn: "They will bear you up in their hands, so that you won’t dash your foot against a stone." },
+  { ref: "詩篇 91:13", text: "你要踹在獅子和虺蛇的身上，踐踏少壯獅子和大蛇。", refEn: "Psalm 91:13", textEn: "You will tread on the lion and cobra. You will trample the young lion and the serpent underfoot." },
+  { ref: "詩篇 91:14", text: "上帝說：因為他專心愛我，我就要搭救他；因為他知道我的名，我要把他安置在高處。", refEn: "Psalm 91:14", textEn: "“Because he has set his love on me, therefore I will deliver him. I will set him on high, because he has known my name." },
+  { ref: "詩篇 91:15", text: "他若求告我，我就應允他；他在急難中，我要與他同在；我要搭救他，使他尊貴。", refEn: "Psalm 91:15", textEn: "He will call on me, and I will answer him. I will be with him in trouble. I will deliver him, and honor him." },
+  { ref: "詩篇 91:16", text: "我要使他足享長壽，將我的救恩顯明給他。", refEn: "Psalm 91:16", textEn: "I will satisfy him with long life, and show him my salvation.”" },
+  { ref: "詩篇 103:1", text: "我的心哪，你要稱頌耶和華！凡在我裏面的，也要稱頌他的聖名！", refEn: "Psalm 103:1", textEn: "Praise Yahweh, my soul! All that is within me, praise his holy name!" },
+  { ref: "詩篇 103:2", text: "我的心哪，你要稱頌耶和華！不可忘記他的一切恩惠！", refEn: "Psalm 103:2", textEn: "Praise Yahweh, my soul, and don’t forget all his benefits," },
+  { ref: "詩篇 103:3", text: "他赦免你的一切罪孽，醫治你的一切疾病。", refEn: "Psalm 103:3", textEn: "who forgives all your sins, who heals all your diseases," },
+  { ref: "詩篇 103:4", text: "他救贖你的命脫離死亡，以仁愛和慈悲為你的冠冕。", refEn: "Psalm 103:4", textEn: "who redeems your life from destruction, who crowns you with loving kindness and tender mercies," },
+  { ref: "詩篇 103:5", text: "他用美物使你所願的得以知足，以致你如鷹返老還童。", refEn: "Psalm 103:5", textEn: "who satisfies your desire with good things, so that your youth is renewed like the eagle’s." },
+  { ref: "詩篇 103:6", text: "耶和華施行公義，為一切受屈的人伸冤。", refEn: "Psalm 103:6", textEn: "Yahweh executes righteous acts, and justice for all who are oppressed." },
+  { ref: "詩篇 103:7", text: "他使摩西知道他的法則，叫以色列人曉得他的作為。", refEn: "Psalm 103:7", textEn: "He made known his ways to Moses, his deeds to the children of Israel." },
+  { ref: "詩篇 103:8", text: "耶和華有憐憫，有恩典，不輕易發怒，且有豐盛的慈愛。", refEn: "Psalm 103:8", textEn: "Yahweh is merciful and gracious, slow to anger, and abundant in loving kindness." },
+  { ref: "詩篇 103:9", text: "他不長久責備，也不永遠懷怒。", refEn: "Psalm 103:9", textEn: "He will not always accuse; neither will he stay angry forever." },
+  { ref: "詩篇 103:10", text: "他沒有按我們的罪過待我們，也沒有照我們的罪孽報應我們。", refEn: "Psalm 103:10", textEn: "He has not dealt with us according to our sins, nor repaid us for our iniquities." },
+  { ref: "詩篇 103:11", text: "天離地何等的高，他的慈愛向敬畏他的人也是何等的大！", refEn: "Psalm 103:11", textEn: "For as the heavens are high above the earth, so great is his loving kindness toward those who fear him." },
+  { ref: "詩篇 103:12", text: "東離西有多遠，他叫我們的過犯離我們也有多遠！", refEn: "Psalm 103:12", textEn: "As far as the east is from the west, so far has he removed our transgressions from us." },
+  { ref: "詩篇 103:13", text: "父親怎樣憐恤他的兒女，耶和華也怎樣憐恤敬畏他的人！", refEn: "Psalm 103:13", textEn: "Like a father has compassion on his children, so Yahweh has compassion on those who fear him." },
+  { ref: "詩篇 103:14", text: "因為他知道我們的本體，思念我們不過是塵土。", refEn: "Psalm 103:14", textEn: "For he knows how we are made. He remembers that we are dust." },
+  { ref: "詩篇 103:15", text: "至於世人，他的年日如草一樣。他發旺如野地的花，", refEn: "Psalm 103:15", textEn: "As for man, his days are like grass. As a flower of the field, so he flourishes." },
+  { ref: "詩篇 103:16", text: "經風一吹，便歸無有；它的原處也不再認識它。", refEn: "Psalm 103:16", textEn: "For the wind passes over it, and it is gone. Its place remembers it no more." },
+  { ref: "詩篇 103:17", text: "但耶和華的慈愛歸於敬畏他的人，從亙古到永遠；他的公義也歸於子子孫孫，", refEn: "Psalm 103:17", textEn: "But Yahweh’s loving kindness is from everlasting to everlasting with those who fear him, his righteousness to children’s children," },
+  { ref: "詩篇 103:18", text: "就是那些遵守他的約、記念他的訓詞而遵行的人。", refEn: "Psalm 103:18", textEn: "to those who keep his covenant, to those who remember to obey his precepts." },
+  { ref: "詩篇 103:19", text: "耶和華在天上立定寶座；他的權柄統管萬有。", refEn: "Psalm 103:19", textEn: "Yahweh has established his throne in the heavens. His kingdom rules over all." },
+  { ref: "詩篇 103:20", text: "聽從他命令、成全他旨意、有大能的天使，都要稱頌耶和華！", refEn: "Psalm 103:20", textEn: "Praise Yahweh, you angels of his, who are mighty in strength, who fulfill his word, obeying the voice of his word." },
+  { ref: "詩篇 103:21", text: "你們作他的諸軍，作他的僕役，行他所喜悅的，都要稱頌耶和華！", refEn: "Psalm 103:21", textEn: "Praise Yahweh, all you armies of his, you servants of his, who do his pleasure." },
+  { ref: "詩篇 103:22", text: "你們一切被他造的，在他所治理的各處，都要稱頌耶和華！", refEn: "Psalm 103:22", textEn: "Praise Yahweh, all you works of his, in all places of his dominion. Praise Yahweh, my soul!" },
+  { ref: "詩篇 139:1", text: "耶和華啊，你已經鑒察我，認識我。", refEn: "Psalm 139:1", textEn: "Yahweh, you have searched me, and you know me." },
+  { ref: "詩篇 139:2", text: "我坐下，我起來，你都曉得；你從遠處知道我的意念。", refEn: "Psalm 139:2", textEn: "You know my sitting down and my rising up. You perceive my thoughts from afar." },
+  { ref: "詩篇 139:3", text: "我行路，我躺臥，你都細察；你也深知我一切所行的。", refEn: "Psalm 139:3", textEn: "You search out my path and my lying down, and are acquainted with all my ways." },
+  { ref: "詩篇 139:4", text: "耶和華啊，我舌頭上的話，你沒有一句不知道的。", refEn: "Psalm 139:4", textEn: "For there is not a word on my tongue, but behold, Yahweh, you know it altogether." },
+  { ref: "詩篇 139:5", text: "你在我前後環繞我，按手在我身上。", refEn: "Psalm 139:5", textEn: "You hem me in behind and before. You laid your hand on me." },
+  { ref: "詩篇 139:6", text: "這樣的知識奇妙，是我不能測的，至高，是我不能及的。", refEn: "Psalm 139:6", textEn: "This knowledge is beyond me. It’s lofty. I can’t attain it." },
+  { ref: "詩篇 139:7", text: "我往哪裏去躲避你的靈？我往哪裏逃、躲避你的面？", refEn: "Psalm 139:7", textEn: "Where could I go from your Spirit? Or where could I flee from your presence?" },
+  { ref: "詩篇 139:8", text: "我若升到天上，你在那裏；我若在陰間下榻，你也在那裏。", refEn: "Psalm 139:8", textEn: "If I ascend up into heaven, you are there. If I make my bed in Sheol, behold, you are there!" },
+  { ref: "詩篇 139:9", text: "我若展開清晨的翅膀，飛到海極居住，", refEn: "Psalm 139:9", textEn: "If I take the wings of the dawn, and settle in the uttermost parts of the sea," },
+  { ref: "詩篇 139:10", text: "就是在那裏，你的手必引導我；你的右手也必扶持我。", refEn: "Psalm 139:10", textEn: "even there your hand will lead me, and your right hand will hold me." },
+  { ref: "詩篇 139:11", text: "我若說：黑暗必定遮蔽我，我周圍的亮光必成為黑夜；", refEn: "Psalm 139:11", textEn: "If I say, “Surely the darkness will overwhelm me. The light around me will be night,”" },
+  { ref: "詩篇 139:12", text: "黑暗也不能遮蔽我，使你不見，黑夜卻如白晝發亮。黑暗和光明，在你看都是一樣。", refEn: "Psalm 139:12", textEn: "even the darkness doesn’t hide from you, but the night shines as the day. The darkness is like light to you." },
+  { ref: "詩篇 139:13", text: "我的肺腑是你所造的；我在母腹中，你已覆庇我。", refEn: "Psalm 139:13", textEn: "For you formed my inmost being. You knit me together in my mother’s womb." },
+  { ref: "詩篇 139:14", text: "我要稱謝你，因我受造，奇妙可畏；你的作為奇妙，這是我心深知道的。", refEn: "Psalm 139:14", textEn: "I will give thanks to you, for I am fearfully and wonderfully made. Your works are wonderful. My soul knows that very well." },
+  { ref: "詩篇 139:15", text: "我在暗中受造，在地的深處被聯絡；那時，我的形體並不向你隱藏。", refEn: "Psalm 139:15", textEn: "My frame wasn’t hidden from you, when I was made in secret, woven together in the depths of the earth." },
+  { ref: "詩篇 139:16", text: "我未成形的體質，你的眼早已看見了；你所定的日子，我尚未度一日，你都寫在你的冊上了。", refEn: "Psalm 139:16", textEn: "Your eyes saw my body. In your book they were all written, the days that were ordained for me, when as yet there were none of them." },
+  { ref: "詩篇 139:17", text: "上帝啊，你的意念向我何等寶貴！其數何等眾多！", refEn: "Psalm 139:17", textEn: "How precious to me are your thoughts, God! How vast is their sum!" },
+  { ref: "詩篇 139:18", text: "我若數點，比海沙更多；我睡醒的時候，仍和你同在。", refEn: "Psalm 139:18", textEn: "If I would count them, they are more in number than the sand. When I wake up, I am still with you." },
+  { ref: "詩篇 139:23", text: "上帝啊，求你鑒察我，知道我的心思，試煉我，知道我的意念，", refEn: "Psalm 139:23", textEn: "Search me, God, and know my heart. Try me, and know my thoughts." },
+  { ref: "詩篇 139:24", text: "看在我裏面有甚麼惡行沒有，引導我走永生的道路。", refEn: "Psalm 139:24", textEn: "See if there is any wicked way in me, and lead me in the everlasting way." },
+
+  // ---- 詩篇 100(公版和合本 + WEB,全章)----
+  { ref: "詩篇 100:1", text: "普天下當向耶和華歡呼！", refEn: "Psalm 100:1", textEn: "Shout for joy to Yahweh, all you lands!" },
+  { ref: "詩篇 100:2", text: "你們當樂意事奉耶和華，當來向他歌唱！", refEn: "Psalm 100:2", textEn: "Serve Yahweh with gladness. Come before his presence with singing." },
+  { ref: "詩篇 100:3", text: "你們當曉得耶和華是上帝！我們是他造的，也是屬他的；我們是他的民，也是他草場的羊。", refEn: "Psalm 100:3", textEn: "Know that Yahweh, he is God. It is he who has made us, and we are his. We are his people, and the sheep of his pasture." },
+  { ref: "詩篇 100:4", text: "當稱謝進入他的門；當讚美進入他的院。當感謝他，稱頌他的名！", refEn: "Psalm 100:4", textEn: "Enter into his gates with thanksgiving, and into his courts with praise. Give thanks to him, and bless his name." },
+  { ref: "詩篇 100:5", text: "因為耶和華本為善。他的慈愛存到永遠；他的信實直到萬代。", refEn: "Psalm 100:5", textEn: "For Yahweh is good. His loving kindness endures forever, his faithfulness to all generations." },
+
+  // ---- 詩篇 121(公版和合本 + WEB,全章)----
+  { ref: "詩篇 121:1", text: "我要向山舉目；我的幫助從何而來？", refEn: "Psalm 121:1", textEn: "I will lift up my eyes to the hills. Where does my help come from?" },
+  { ref: "詩篇 121:2", text: "我的幫助從造天地的耶和華而來。", refEn: "Psalm 121:2", textEn: "My help comes from Yahweh, who made heaven and earth." },
+  { ref: "詩篇 121:3", text: "他必不叫你的腳搖動；保護你的必不打盹！", refEn: "Psalm 121:3", textEn: "He will not allow your foot to be moved. He who keeps you will not slumber." },
+  { ref: "詩篇 121:4", text: "保護以色列的，也不打盹也不睡覺。", refEn: "Psalm 121:4", textEn: "Behold, he who keeps Israel will neither slumber nor sleep." },
+  { ref: "詩篇 121:5", text: "保護你的是耶和華；耶和華在你右邊蔭庇你。", refEn: "Psalm 121:5", textEn: "Yahweh is your keeper. Yahweh is your shade on your right hand." },
+  { ref: "詩篇 121:6", text: "白日，太陽必不傷你；夜間，月亮必不害你。", refEn: "Psalm 121:6", textEn: "The sun will not harm you by day, nor the moon by night." },
+  { ref: "詩篇 121:7", text: "耶和華要保護你，免受一切的災害；他要保護你的性命。", refEn: "Psalm 121:7", textEn: "Yahweh will keep you from all evil. He will keep your soul." },
+  { ref: "詩篇 121:8", text: "你出你入，耶和華要保護你，從今時直到永遠。", refEn: "Psalm 121:8", textEn: "Yahweh will keep your going out and your coming in, from this time forward, and forever more." },
+
+  // ---- 詩篇 34(公版和合本 + WEB,全章)----
+  { ref: "詩篇 34:1", text: "我要時時稱頌耶和華；讚美他的話必常在我口中。", refEn: "Psalm 34:1", textEn: "I will bless Yahweh at all times. His praise will always be in my mouth." },
+  { ref: "詩篇 34:2", text: "我的心必因耶和華誇耀；謙卑人聽見就要喜樂。", refEn: "Psalm 34:2", textEn: "My soul shall boast in Yahweh. The humble shall hear of it and be glad." },
+  { ref: "詩篇 34:3", text: "你們和我當稱耶和華為大，一同高舉他的名。", refEn: "Psalm 34:3", textEn: "Oh magnify Yahweh with me. Let’s exalt his name together." },
+  { ref: "詩篇 34:4", text: "我曾尋求耶和華，他就應允我，救我脫離了一切的恐懼。", refEn: "Psalm 34:4", textEn: "I sought Yahweh, and he answered me, and delivered me from all my fears." },
+  { ref: "詩篇 34:5", text: "凡仰望他的，便有光榮；他們的臉必不蒙羞。", refEn: "Psalm 34:5", textEn: "They looked to him, and were radiant. Their faces shall never be covered with shame." },
+  { ref: "詩篇 34:6", text: "我這困苦人呼求，耶和華便垂聽，救我脫離一切患難。", refEn: "Psalm 34:6", textEn: "This poor man cried, and Yahweh heard him, and saved him out of all his troubles." },
+  { ref: "詩篇 34:7", text: "耶和華的使者在敬畏他的人四圍安營，搭救他們。", refEn: "Psalm 34:7", textEn: "Yahweh’s angel encamps around those who fear him, and delivers them." },
+  { ref: "詩篇 34:8", text: "你們要嘗嘗主恩的滋味，便知道他是美善；投靠他的人有福了！", refEn: "Psalm 34:8", textEn: "Oh taste and see that Yahweh is good. Blessed is the man who takes refuge in him." },
+  { ref: "詩篇 34:9", text: "耶和華的聖民哪，你們當敬畏他，因敬畏他的一無所缺。", refEn: "Psalm 34:9", textEn: "Oh fear Yahweh, you his saints, for there is no lack with those who fear him." },
+  { ref: "詩篇 34:10", text: "少壯獅子還缺食忍餓，但尋求耶和華的甚麼好處都不缺。", refEn: "Psalm 34:10", textEn: "The young lions do lack, and suffer hunger, but those who seek Yahweh shall not lack any good thing." },
+  { ref: "詩篇 34:11", text: "眾弟子啊，你們當來聽我的話！我要將敬畏耶和華的道教訓你們。", refEn: "Psalm 34:11", textEn: "Come, you children, listen to me. I will teach you the fear of Yahweh." },
+  { ref: "詩篇 34:12", text: "有何人喜好存活，愛慕長壽，得享美福，", refEn: "Psalm 34:12", textEn: "Who is someone who desires life, and loves many days, that he may see good?" },
+  { ref: "詩篇 34:13", text: "就要禁止舌頭不出惡言，嘴唇不說詭詐的話。", refEn: "Psalm 34:13", textEn: "Keep your tongue from evil, and your lips from speaking lies." },
+  { ref: "詩篇 34:14", text: "要離惡行善，尋求和睦，一心追趕。", refEn: "Psalm 34:14", textEn: "Depart from evil, and do good. Seek peace, and pursue it." },
+  { ref: "詩篇 34:15", text: "耶和華的眼目看顧義人；他的耳朵聽他們的呼求。", refEn: "Psalm 34:15", textEn: "Yahweh’s eyes are toward the righteous. His ears listen to their cry." },
+  { ref: "詩篇 34:16", text: "耶和華向行惡的人變臉，要從世上除滅他們的名號。", refEn: "Psalm 34:16", textEn: "Yahweh’s face is against those who do evil, to cut off their memory from the earth." },
+  { ref: "詩篇 34:17", text: "義人呼求，耶和華聽見了，便救他們脫離一切患難。", refEn: "Psalm 34:17", textEn: "The righteous cry, and Yahweh hears, and delivers them out of all their troubles." },
+  { ref: "詩篇 34:18", text: "耶和華靠近傷心的人，拯救靈性痛悔的人。", refEn: "Psalm 34:18", textEn: "Yahweh is near to those who have a broken heart, and saves those who have a crushed spirit." },
+  { ref: "詩篇 34:19", text: "義人多有苦難，但耶和華救他脫離這一切，", refEn: "Psalm 34:19", textEn: "Many are the afflictions of the righteous, but Yahweh delivers him out of them all." },
+  { ref: "詩篇 34:20", text: "又保全他一身的骨頭，連一根也不折斷。", refEn: "Psalm 34:20", textEn: "He protects all of his bones. Not one of them is broken." },
+  { ref: "詩篇 34:21", text: "惡必害死惡人；恨惡義人的，必被定罪。", refEn: "Psalm 34:21", textEn: "Evil shall kill the wicked. Those who hate the righteous shall be condemned." },
+  { ref: "詩篇 34:22", text: "耶和華救贖他僕人的靈魂；凡投靠他的，必不致定罪。", refEn: "Psalm 34:22", textEn: "Yahweh redeems the soul of his servants. None of those who take refuge in him shall be condemned." },
+];
+
+// 依「一年中的第幾天」決定當日經文,確保同一天打開結果一致
+function getDayOfYear(date) {
+  const start = new Date(date.getFullYear(), 0, 0);
+  const diff = date - start;
+  return Math.floor(diff / 86400000);
+}
+
+// 每日一組多色 pastel 漸層(不同色相混合,不依賴外部圖床)
+const SKIES = [
+  ["#FCE4EC", "#E1D5F5", "#B2EBF2"], // 粉櫻 → 薰衣草 → 天藍
+  ["#FFF3E0", "#F8BBD0", "#D1C4E9"], // 蜜桃 → 粉紅 → 紫丁香
+  ["#E0F7FA", "#C5E1F5", "#D1C4E9"], // 冰藍 → 天霧藍 → 淡紫
+  ["#FFFDE7", "#FFE0B2", "#F8BBD0"], // 奶油黃 → 杏橘 → 粉紅
+  ["#E8F5E9", "#B2DFDB", "#B3E5FC"], // 嫩芽綠 → 薄荷 → 天空藍
+  ["#F3E5F5", "#E1BEE7", "#FFCCBC"], // 紫丁香 → 淡紫 → 珊瑚
+  ["#E1F5FE", "#B2EBF2", "#DCEDC8"], // 晴空藍 → 薄荷 → 嫩綠
+  ["#FBE9E7", "#FFCCBC", "#FFECB3"], // 珊瑚粉 → 蜜桃 → 奶油
+];
+
+// 極簡風配色 token
+const INK = "#26241F";
+const PAPER = "#F7F5F0";
+const MUTED = "#8C8A80";
+const LINE = "#DAD5C9";
+const ACCENT = "#A9835A";
+
+function DailyVerse() {
+  const [offset, setOffset] = useState(0);
+  const [favorites, setFavorites] = useState({});
+  const [loaded, setLoaded] = useState(false);
+  const [justToggled, setJustToggled] = useState(false);
+  const [showFavorites, setShowFavorites] = useState(false);
+
+  const base = useMemo(() => getDayOfYear(new Date()), []);
+
+  const dayIndex = useMemo(() => {
+    return ((base + offset) % VERSES.length + VERSES.length) % VERSES.length;
+  }, [offset, base]);
+
+  const verse = VERSES[dayIndex];
+  const sky = SKIES[dayIndex % SKIES.length];
+
+  const goToVerse = (index) => {
+    setOffset(index - base);
+    setShowFavorites(false);
+  };
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const res = await window.storage.get("daily-verse:favorites");
+        if (res && res.value) setFavorites(JSON.parse(res.value));
+      } catch (e) {
+        // 尚無收藏紀錄
+      }
+      setLoaded(true);
+    })();
+  }, []);
+
+  const toggleFavorite = async () => {
+    const next = { ...favorites };
+    if (next[dayIndex]) {
+      delete next[dayIndex];
+    } else {
+      next[dayIndex] = true;
+    }
+    setFavorites(next);
+    setJustToggled(true);
+    setTimeout(() => setJustToggled(false), 400);
+    try {
+      await window.storage.set("daily-verse:favorites", JSON.stringify(next));
+    } catch (e) {
+      console.error("儲存收藏失敗", e);
+    }
+  };
+
+  const todayParts = useMemo(() => {
+    const d = new Date();
+    const months = ["JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"];
+    const weekdays = ["SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"];
+    return {
+      day: String(d.getDate()).padStart(2, "0"),
+      month: months[d.getMonth()],
+      weekday: weekdays[d.getDay()],
+    };
+  }, []);
+
+  const isFavorite = !!favorites[dayIndex];
+  const iconBtnStyle = {
+    width: 38,
+    height: 38,
+    borderRadius: 9999,
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    color: INK,
+    background: "transparent",
+    border: "none",
+    cursor: "pointer",
+    opacity: 0.55,
+  };
+
+  return (
+    <div
+      style={{
+        minHeight: "100vh",
+        width: "100%",
+        background: PAPER,
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        padding: "32px 20px",
+        boxSizing: "border-box",
+        fontFamily: "'Noto Sans TC', sans-serif",
+      }}
+    >
+      <div style={{ width: "100%", maxWidth: 400 }}>
+        {/* Card:單一漸層面,無外框裝飾 */}
+        <div
+          style={{
+            position: "relative",
+            borderRadius: 6,
+            overflow: "hidden",
+            boxShadow: "0 16px 40px -20px rgba(38,36,31,0.35)",
+          }}
+        >
+          <div style={{ position: "relative", width: "100%", paddingTop: "120%" }}>
+            <div
+              style={{
+                position: "absolute",
+                inset: 0,
+                background: `linear-gradient(165deg, ${sky[0]} 0%, ${sky[1]} 58%, ${sky[2]} 100%)`,
+              }}
+            />
+            <div
+              style={{
+                position: "absolute",
+                inset: 0,
+                background:
+                  "linear-gradient(180deg, rgba(20,20,20,0.4) 0%, rgba(20,20,20,0.1) 34%, rgba(38,36,31,0.12) 48%, rgba(38,36,31,0.78) 100%)",
+              }}
+            />
+
+            {/* 日期:壓在圖面上,大字、堆疊,與下方內文對齊同一條左側網格線 */}
+            <div style={{ position: "absolute", top: 28, left: 28 }}>
+              <div
+                style={{
+                  fontFamily: "'Helvetica Neue', Arial, 'Noto Sans TC', sans-serif",
+                  fontSize: 88,
+                  fontWeight: 800,
+                  lineHeight: 0.85,
+                  color: "#FFFFFF",
+                  letterSpacing: "-0.03em",
+                }}
+              >
+                {todayParts.day}
+              </div>
+              <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 12 }}>
+                <div style={{ width: 22, height: 1, background: "rgba(255,255,255,0.6)" }} />
+                <span
+                  style={{
+                    fontFamily: "'Helvetica Neue', Arial, sans-serif",
+                    fontSize: 12,
+                    fontWeight: 700,
+                    letterSpacing: "0.22em",
+                    color: "#FFFFFF",
+                  }}
+                >
+                  {todayParts.month}
+                </span>
+                <span
+                  style={{
+                    fontFamily: "'Helvetica Neue', Arial, sans-serif",
+                    fontSize: 11,
+                    letterSpacing: "0.22em",
+                    color: "rgba(255,255,255,0.72)",
+                  }}
+                >
+                  {todayParts.weekday}
+                </span>
+              </div>
+            </div>
+            {offset !== 0 && (
+              <div
+                style={{
+                  position: "absolute",
+                  top: 32,
+                  right: 60,
+                  fontSize: 11,
+                  letterSpacing: "0.1em",
+                  fontFamily: "'Helvetica Neue', Arial, sans-serif",
+                  color: "#FFFFFF",
+                  opacity: 0.85,
+                }}
+              >
+                {offset > 0 ? `+${offset}` : offset}
+              </div>
+            )}
+
+            {/* Verse text */}
+            <div style={{ position: "absolute", left: 0, right: 0, bottom: 0, padding: "30px 28px" }}>
+              <p
+                style={{
+                  color: "#FFFFFF",
+                  lineHeight: 1.95,
+                  fontSize: 18,
+                  margin: 0,
+                  fontWeight: 400,
+                  fontFamily: "'Noto Sans TC', sans-serif",
+                }}
+              >
+                {verse.text}
+              </p>
+              {verse.textEn && (
+                <p
+                  style={{
+                    marginTop: 14,
+                    marginBottom: 0,
+                    fontSize: 13,
+                    lineHeight: 1.65,
+                    color: "rgba(255,255,255,0.62)",
+                    fontFamily: "'Noto Sans TC', sans-serif",
+                    fontStyle: "italic",
+                  }}
+                >
+                  {verse.textEn}
+                </p>
+              )}
+              <div style={{ width: 20, height: 1, background: "rgba(255,255,255,0.45)", margin: "16px 0 10px" }} />
+              <p
+                style={{
+                  margin: 0,
+                  fontSize: 12,
+                  letterSpacing: "0.06em",
+                  color: "rgba(255,255,255,0.7)",
+                }}
+              >
+                {verse.ref}
+                {verse.refEn ? ` · ${verse.refEn}` : ""}
+              </p>
+            </div>
+
+            {/* Favorite button */}
+            <button
+              onClick={toggleFavorite}
+              aria-label={isFavorite ? "取消收藏" : "收藏這句經文"}
+              style={{
+                position: "absolute",
+                top: 24,
+                right: 22,
+                width: 34,
+                height: 34,
+                borderRadius: 9999,
+                background: "rgba(38,36,31,0.28)",
+                border: "none",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                cursor: "pointer",
+                transform: justToggled ? "scale(1.15)" : "scale(1)",
+                transition: "transform 0.2s ease",
+              }}
+            >
+              <Heart
+                size={16}
+                color="#FFFFFF"
+                fill={isFavorite ? "#FFFFFF" : "none"}
+                strokeWidth={1.6}
+              />
+            </button>
+          </div>
+        </div>
+
+        {/* Controls:與卡片內文對齊同一條左右網格線 */}
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            marginTop: 18,
+            padding: "0 6px",
+          }}
+        >
+          <button onClick={() => setOffset((o) => o - 1)} style={iconBtnStyle} aria-label="前一句">
+            <ChevronLeft size={19} />
+          </button>
+
+          <button
+            onClick={() => setOffset(0)}
+            style={{
+              fontSize: 12,
+              letterSpacing: "0.08em",
+              color: MUTED,
+              background: "transparent",
+              border: "none",
+              cursor: "pointer",
+            }}
+          >
+            回到今日
+          </button>
+
+          <button
+            onClick={() =>
+              setOffset(Math.floor(Math.random() * VERSES.length) - dayIndex + offset)
+            }
+            style={iconBtnStyle}
+            aria-label="隨機一句"
+          >
+            <Shuffle size={16} />
+          </button>
+
+          <button onClick={() => setOffset((o) => o + 1)} style={iconBtnStyle} aria-label="後一句">
+            <ChevronRight size={19} />
+          </button>
+        </div>
+
+        {loaded && Object.keys(favorites).length > 0 && (
+          <button
+            onClick={() => setShowFavorites(true)}
+            style={{
+              display: "block",
+              width: "100%",
+              textAlign: "center",
+              fontSize: 11,
+              color: MUTED,
+              marginTop: 24,
+              letterSpacing: "0.06em",
+              background: "transparent",
+              border: "none",
+              cursor: "pointer",
+            }}
+          >
+            已收藏 {Object.keys(favorites).length} 句 · 點我查看
+          </button>
+        )}
+      </div>
+
+      {/* 收藏清單彈窗 */}
+      {showFavorites && (
+        <div
+          onClick={() => setShowFavorites(false)}
+          style={{
+            position: "fixed",
+            inset: 0,
+            background: "rgba(38,36,31,0.45)",
+            display: "flex",
+            alignItems: "flex-end",
+            justifyContent: "center",
+            zIndex: 50,
+          }}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              width: "100%",
+              maxWidth: 400,
+              maxHeight: "78vh",
+              background: PAPER,
+              borderRadius: "14px 14px 0 0",
+              overflow: "hidden",
+              display: "flex",
+              flexDirection: "column",
+              boxShadow: "0 -12px 40px rgba(38,36,31,0.2)",
+            }}
+          >
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                padding: "18px 22px 14px",
+                borderBottom: `1px solid ${LINE}`,
+              }}
+            >
+              <span
+                style={{
+                  fontFamily: "'Noto Sans TC', sans-serif",
+                  fontSize: 16,
+                  color: INK,
+                  fontWeight: 500,
+                }}
+              >
+                收藏的經文
+                <span style={{ color: MUTED, fontWeight: 400, fontSize: 12, marginLeft: 8 }}>
+                  {Object.keys(favorites).length} 句
+                </span>
+              </span>
+              <button
+                onClick={() => setShowFavorites(false)}
+                aria-label="關閉"
+                style={{
+                  width: 28,
+                  height: 28,
+                  borderRadius: 9999,
+                  border: "none",
+                  background: "transparent",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  cursor: "pointer",
+                  color: MUTED,
+                }}
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            <div style={{ overflowY: "auto", padding: "6px 22px 24px" }}>
+              {Object.keys(favorites)
+                .map(Number)
+                .sort((a, b) => a - b)
+                .map((idx) => {
+                  const v = VERSES[idx];
+                  if (!v) return null;
+                  return (
+                    <div
+                      key={idx}
+                      style={{
+                        display: "flex",
+                        alignItems: "flex-start",
+                        justifyContent: "space-between",
+                        gap: 10,
+                        padding: "14px 0",
+                        borderBottom: `1px solid ${LINE}`,
+                      }}
+                    >
+                      <button
+                        onClick={() => goToVerse(idx)}
+                        style={{
+                          flex: 1,
+                          textAlign: "left",
+                          background: "transparent",
+                          border: "none",
+                          cursor: "pointer",
+                          padding: 0,
+                        }}
+                      >
+                        <p
+                          style={{
+                            margin: 0,
+                            fontSize: 14,
+                            lineHeight: 1.7,
+                            color: INK,
+                            fontFamily: "'Noto Sans TC', sans-serif",
+                          }}
+                        >
+                          {v.text}
+                        </p>
+                        <p style={{ margin: "4px 0 0", fontSize: 12, color: ACCENT }}>{v.ref}</p>
+                      </button>
+                      <button
+                        onClick={() => {
+                          const next = { ...favorites };
+                          delete next[idx];
+                          setFavorites(next);
+                          window.storage
+                            .set("daily-verse:favorites", JSON.stringify(next))
+                            .catch(() => {});
+                        }}
+                        aria-label="取消收藏"
+                        style={{
+                          background: "transparent",
+                          border: "none",
+                          cursor: "pointer",
+                          padding: 4,
+                          marginTop: 2,
+                        }}
+                      >
+                        <Heart size={16} color={ACCENT} fill={ACCENT} strokeWidth={1.6} />
+                      </button>
+                    </div>
+                  );
+                })}
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+
+const root = ReactDOM.createRoot(document.getElementById("root"));
+root.render(<DailyVerse />);
+</script>
+</body>
+</html>
